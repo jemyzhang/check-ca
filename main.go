@@ -6,6 +6,7 @@ import (
   "os"
   "os/exec"
   "time"
+  "bytes"
 )
 
 func checkWebsiteCertExpiration(url string) (bool, error) {
@@ -30,7 +31,7 @@ func checkWebsiteCertExpiration(url string) (bool, error) {
   timeUntilExpiration := expiration.Sub(now)
 
   // Notify if the certificate will expire soon
-  if timeUntilExpiration < time.Hour {
+  if timeUntilExpiration < time.Hour * 24 * 30 {
     var message string
     if timeUntilExpiration > 0 {
       message = "will expire soon."
@@ -46,13 +47,14 @@ func checkWebsiteCertExpiration(url string) (bool, error) {
   return false, nil
 }
 
-func runUpdateScript(scriptPath string) error {
+func runUpdateScript(scriptPath string) (bytes.Buffer, bytes.Buffer, error) {
   // Run update script
   cmd := exec.Command(scriptPath)
+  var stdout, stderr bytes.Buffer
   cmd.Stdin = os.Stdin
-  cmd.Stdout = os.Stdout
-  cmd.Stderr = os.Stderr
-  return cmd.Run()
+  cmd.Stdout = &stdout
+  cmd.Stderr = &stderr
+  return stdout, stderr, cmd.Run()
 }
 
 func main() {
@@ -64,6 +66,12 @@ func main() {
   websiteURL := os.Args[1]
   updateScript := os.Args[2]
 
+  logFile := ""
+
+  if len(os.Args) > 3 {
+    logFile = os.Args[3]
+  }
+
   ret, err := checkWebsiteCertExpiration(websiteURL)
   if err != nil {
     fmt.Printf("Error: %v\n", err)
@@ -72,9 +80,27 @@ func main() {
 
   if ret {
     fmt.Println("Running update script")
-    err := runUpdateScript(updateScript)
+    stdout, stderr, err := runUpdateScript(updateScript)
     if err != nil {
       fmt.Printf("Error: %v\n", err)
+    }
+    var f *os.File
+    if (logFile != "") {
+      f, err = os.OpenFile(logFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+      if err != nil {
+        fmt.Printf("Error: %v\n", err)
+        return
+      }
+      t := time.Now()
+      f.WriteString("\n[" + t.Format("2006-01-02 15:04:05") + "]\n")
+    } else {
+      f = os.Stdout
+    }
+    defer f.Close()
+    _, err = f.WriteString(stdout.String() + stderr.String())
+    if err != nil {
+      fmt.Printf("Error: %v\n", err)
+      return
     }
   }
 }
